@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 regex = "1"
+sha2 = "0.10"
 url = "2"
 
 [dev-dependencies]

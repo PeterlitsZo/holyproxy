@@ -8,4 +8,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 holyproxy-core = { path = "../core" }
-worker = "0.8.7"
+worker = { version = "0.8.7", features = ["d1"] }
+serde = { version = "1", features = ["derive"] }

@@ -1,5 +1,18 @@
 # AGENTS.md
 
+## Private Deployment Configuration
+
+- Never put real account IDs, resource IDs, credentials, or production data in
+  tracked files, examples, documentation, commit messages, or user-facing output.
+  Redact private values before displaying tool output.
+- Keep `wrangler.jsonc` generic. Store deployment-specific configuration only in
+  the gitignored `wrangler.private.jsonc`; keep local exports under `.wrangler/`.
+- Never let Wrangler auto-provisioning or `--update-config` write real resource
+  IDs into tracked configuration. Use an ignored private configuration instead.
+- Before staging or committing, inspect both the working tree and staged changes
+  for private configuration. Verify private files are ignored and not tracked.
+
+
 ## When You Need to Commit
 
 WHEN THE USER ASKS YOU TO COMMIT, you MUST follow this section.

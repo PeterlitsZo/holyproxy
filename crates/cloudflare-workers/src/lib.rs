@@ -1,9 +1,43 @@
-use holyproxy_core::{HttpClient, ProxyError, ProxyRequest, ProxyResponse, error_response, proxy};
+use holyproxy_core::{
+    ApiKeyRecord, ApiKeyStore, HttpClient, ProxyError, ProxyRequest, ProxyResponse, error_response,
+    proxy,
+};
 use worker::*;
+
+mod audit;
+use audit::WorkersAudit;
 
 struct WorkersRequest(Request);
 struct WorkersResponse(Response);
 struct WorkersClient;
+struct WorkersApiKeys(Env);
+
+impl ApiKeyStore for WorkersApiKeys {
+    type Error = Error;
+
+    async fn contains(&self, key_hash: &str) -> Result<Option<ApiKeyRecord>> {
+        #[derive(serde::Deserialize)]
+        struct StoredApiKey {
+            username: String,
+        }
+
+        let db = self.0.d1("HOLYPROXY")?;
+        let record = db
+            .prepare("SELECT username FROM api_keys WHERE key_hash = ?1")
+            .bind(&[key_hash.into()])?
+            .first::<StoredApiKey>(None)
+            .await?;
+        match record {
+            Some(record) if record.username.trim().is_empty() => {
+                Err(Error::RustError("Invalid API key identity".into()))
+            }
+            Some(record) => Ok(Some(ApiKeyRecord {
+                username: record.username,
+            })),
+            None => Ok(None),
+        }
+    }
+}
 
 impl ProxyRequest for WorkersRequest {
     type Error = Error;
@@ -72,10 +106,21 @@ impl HttpClient for WorkersClient {
 }
 
 #[event(fetch)]
-pub async fn main(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
-    let response = match proxy(&WorkersClient, WorkersRequest(req)).await {
+pub async fn main(req: Request, env: Env, ctx: Context) -> Result<Response> {
+    let audit = WorkersAudit::new(env.clone(), ctx, Date::now().as_millis() / 1000);
+    let response = match proxy(
+        &WorkersClient,
+        &WorkersApiKeys(env),
+        &audit,
+        WorkersRequest(req),
+    )
+    .await
+    {
         Ok(response) => response,
         Err(error) => {
+            if matches!(&error, ProxyError::AuthStore(_)) {
+                console_error!("Release proxy authorization store failed");
+            }
             if matches!(&error, ProxyError::Runtime(_)) {
                 console_error!("Release proxy upstream request failed");
             }

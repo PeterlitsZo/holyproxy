@@ -3,5 +3,8 @@
   "main": "build/index.js",
   "compatibility_date": "2026-10-19",
   "build": { "command": "worker-build --release" },
-  "observability": { "enabled": true }
+  "d1_databases": [
+    { "binding": "HOLYPROXY", "database_name": "holyproxy" }
+  ],
+  "observability": { "enabled": true, "logs": { "invocation_logs": false } }
 }

@@ -1,3 +1,5 @@
+use crate::audit::{Audit, AuditEvent, AuditOutcome};
+use crate::auth::{ApiKeyStore, credentials};
 use std::future::Future;
 use url::Url;
 
@@ -40,6 +42,8 @@ pub trait HttpClient {
 /// Proxy policy failures or an original runtime error for adapter-side logging.
 #[derive(Debug, PartialEq)]
 pub enum ProxyError<E> {
+    Forbidden,
+    AuthStore(E),
     UnsupportedMethod,
     InvalidTarget,
     InvalidRedirect,
@@ -49,6 +53,12 @@ pub enum ProxyError<E> {
 /// Construct the public error response without exposing runtime error details.
 pub fn error_response<R: ProxyResponse>(error: ProxyError<R::Error>) -> Result<R, R::Error> {
     match error {
+        ProxyError::Forbidden => R::text(403, "Forbidden", &[("Cache-Control", "no-store")]),
+        ProxyError::AuthStore(_) => R::text(
+            503,
+            "Authorization service unavailable",
+            &[("Cache-Control", "no-store")],
+        ),
         ProxyError::UnsupportedMethod => R::text(
             405,
             "Only GET and HEAD are supported",
@@ -65,15 +75,45 @@ pub fn error_response<R: ProxyResponse>(error: ProxyError<R::Error>) -> Result<R
 /// Proxy a public Release attachment, including validation and download redirects.
 pub async fn proxy<C: HttpClient>(
     client: &C,
+    keys: &impl ApiKeyStore<Error = C::Error>,
+    audit: &impl Audit,
     request: impl ProxyRequest<Error = C::Error>,
 ) -> Result<C::Response, ProxyError<C::Error>> {
+    let mut username = None;
+    let result = proxy_inner(client, keys, request, &mut username).await;
+    let outcome = match &result {
+        Ok(response) if (200..400).contains(&response.status()) => AuditOutcome::Success,
+        _ => AuditOutcome::Failure,
+    };
+    audit.record(AuditEvent { username, outcome });
+    result
+}
+
+async fn proxy_inner<C: HttpClient>(
+    client: &C,
+    keys: &impl ApiKeyStore<Error = C::Error>,
+    request: impl ProxyRequest<Error = C::Error>,
+    username: &mut Option<String>,
+) -> Result<C::Response, ProxyError<C::Error>> {
+    let mut incoming = request.url().map_err(ProxyError::Runtime)?;
+    let header = request
+        .header("X-Holyproxy-Key")
+        .map_err(ProxyError::Runtime)?;
+    let (digest, query) =
+        credentials(header.as_deref(), incoming.query()).ok_or(ProxyError::Forbidden)?;
+    let identity = keys
+        .contains(&digest)
+        .await
+        .map_err(ProxyError::AuthStore)?
+        .ok_or(ProxyError::Forbidden)?;
+    *username = Some(identity.username);
+    incoming.set_query(query.as_deref());
     let method = request.method();
 
     if !matches!(method.as_str(), "GET" | "HEAD") {
         return Err(ProxyError::UnsupportedMethod);
     }
 
-    let incoming = request.url().map_err(ProxyError::Runtime)?;
     let Some(mut target) = release_url(incoming.path(), incoming.query()) else {
         return Err(ProxyError::InvalidTarget);
     };
