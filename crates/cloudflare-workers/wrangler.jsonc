@@ -1,0 +1,7 @@
+{
+  "name": "holyproxy",
+  "main": "build/index.js",
+  "compatibility_date": "2026-10-19",
+  "build": { "command": "worker-build --release" },
+  "observability": { "enabled": true }
+}

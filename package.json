@@ -1,0 +1,12 @@
+{
+  "name": "holyproxy",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev --cwd crates/cloudflare-workers",
+    "deploy": "wrangler deploy --cwd crates/cloudflare-workers",
+    "check:deploy": "wrangler deploy --dry-run --cwd crates/cloudflare-workers"
+  },
+  "devDependencies": {
+    "wrangler": "^4.151.1"
+  }
+}

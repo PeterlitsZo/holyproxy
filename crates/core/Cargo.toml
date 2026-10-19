@@ -1,0 +1,11 @@
+[package]
+name = "holyproxy-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+regex = "1"
+url = "2"
+
+[dev-dependencies]
+futures = { version = "0.3", default-features = false, features = ["executor"] }

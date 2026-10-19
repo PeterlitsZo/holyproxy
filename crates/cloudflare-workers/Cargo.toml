@@ -1,0 +1,11 @@
+[package]
+name = "holyproxy-cloudflare-workers"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+holyproxy-core = { path = "../core" }
+worker = "0.8.7"
