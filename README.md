@@ -5,7 +5,7 @@ Supports GET, HEAD, ranges, streaming, and GitHub download redirects.
 
 ## Usage
 
-Set `HOLYPROXY_KEY` to an allowed key, then prefix the asset URL:
+Open `/` for instructions and a download form, or set `HOLYPROXY_KEY` and run:
 
 ```sh
 asset='github.com/OWNER/REPO/releases/download/TAG/FILE'

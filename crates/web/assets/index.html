@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>holyproxy — Release downloads</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23171717'/%3E%3Ctext x='8' y='24' font-size='26' fill='white'%3Eh%3C/text%3E%3C/svg%3E">
+  <style>
+    :root { color-scheme: light; font: 16px/1.6 system-ui, sans-serif;
+      color: #171717; background: #ffffff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { max-width: 680px; margin: 0 auto; padding: 48px 24px; }
+    header { border-bottom: 1px solid #e5e5e5; padding-bottom: 24px; }
+    .brand { font-weight: 700; letter-spacing: -.04em; font-size: 22px; }
+    h1 { font-size: clamp(28px, 5vw, 38px); line-height: 1.2;
+      letter-spacing: -.035em; margin: 32px 0 12px; }
+    h2 { font-size: 18px; margin: 0 0 12px; }
+    p { margin: 0 0 16px; }
+    .muted { color: #666666; }
+    form { padding: 28px 0; }
+    label { display: block; font-weight: 600; margin-bottom: 8px; }
+    textarea { display: block; width: 100%; padding: 12px; border: 1px solid #a3a3a3;
+      border-radius: 2px; font: inherit; background: white; color: inherit; resize: vertical; overflow-wrap: anywhere; }
+    .field { margin-bottom: 20px; }
+    textarea:focus-visible, button:focus-visible, a:focus-visible { outline: 3px solid #525252;
+      outline-offset: 3px; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 4px;
+      border-bottom: 1px solid #d4d4d4; margin-bottom: 20px; }
+    .tabs button { border: 0; border-bottom: 3px solid transparent;
+      padding: 10px 12px; background: transparent; color: #666666;
+      font: inherit; font-size: 14px; cursor: pointer; }
+    .tabs button[aria-selected="true"] { color: #171717;
+      border-bottom-color: #171717; font-weight: 700; }
+    .tabs button:hover { background: #f5f5f5; }
+    [hidden] { display: none !important; }
+    a { color: #171717; text-underline-offset: 4px; }
+    .output { font: 13px/1.7 ui-monospace, monospace;
+      background: #f5f5f5; min-height: 130px; }
+    .note { font-size: 14px; margin-top: 12px; }
+    #error { color: #171717; margin: 0 0 16px;
+      border-left: 2px solid #171717; padding-left: 12px; }
+    #error:empty { display: none; }
+    section { padding: 24px 0; border-top: 1px solid #e5e5e5; }
+    code { font: 13px/1.7 ui-monospace, monospace; overflow-wrap: anywhere; }
+    .example { display: block; padding: 10px 12px; background: #f5f5f5;
+      border-radius: 2px; margin-bottom: 8px; }
+    noscript p { padding: 16px; background: #f5f5f5; }
+    @media (max-width: 480px) { main { padding: 28px 20px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="brand">holyproxy</div>
+    <h1>Your next release, ready to download.</h1>
+    <p class="muted">Download public GitHub Release assets through this proxy.
+      Bring a release asset link and a valid API key.</p>
+  </header>
+  <form id="download-form" autocomplete="off" novalidate>
+    <div class="field">
+      <label for="asset">Release asset URL</label>
+      <textarea id="asset" rows="3" inputmode="url" spellcheck="false"
+        autocapitalize="none" placeholder="https://github.com/OWNER/REPO/releases/…"
+        aria-describedby="formats error" required></textarea>
+    </div>
+    <div class="field">
+      <label for="key">API key</label>
+      <textarea id="key" rows="3" spellcheck="false" autocapitalize="none"
+        autocomplete="off" aria-describedby="key-note error" required></textarea>
+    </div>
+    <p id="error" role="alert"></p>
+    <div id="methods" hidden>
+      <div class="tabs" role="tablist" aria-label="Download method">
+        <button id="tab-direct" type="button" role="tab" aria-selected="true"
+          aria-controls="panel-direct" tabindex="0">Direct download</button>
+        <button id="tab-link" type="button" role="tab" aria-selected="false"
+          aria-controls="panel-link" tabindex="-1">Get link</button>
+        <button id="tab-curl" type="button" role="tab" aria-selected="false"
+          aria-controls="panel-curl" tabindex="-1">cURL</button>
+        <button id="tab-wget" type="button" role="tab" aria-selected="false"
+          aria-controls="panel-wget" tabindex="-1">wget</button>
+      </div>
+      <p id="empty" class="muted">Enter an asset URL and API key to get started.</p>
+      <div id="panel-direct" role="tabpanel" aria-labelledby="tab-direct"
+        tabindex="0">
+        <a id="direct-link" referrerpolicy="no-referrer" hidden>Download this asset ↗</a>
+      </div>
+      <div id="panel-link" role="tabpanel" aria-labelledby="tab-link"
+        tabindex="0" hidden>
+        <label for="link-output">Proxy URL with API key</label>
+        <textarea id="link-output" class="output" rows="5" readonly
+          spellcheck="false" placeholder="Your download link will appear here."></textarea>
+      </div>
+      <div id="panel-curl" role="tabpanel" aria-labelledby="tab-curl"
+        tabindex="0" hidden>
+        <label for="curl-output">cURL command</label>
+        <textarea id="curl-output" class="output" rows="5" readonly
+          spellcheck="false" placeholder="Your cURL command will appear here."></textarea>
+        <p class="note muted">For POSIX shells. Your key is sent in a request header.</p>
+      </div>
+      <div id="panel-wget" role="tabpanel" aria-labelledby="tab-wget"
+        tabindex="0" hidden>
+        <label for="wget-output">wget command</label>
+        <textarea id="wget-output" class="output" rows="5" readonly
+          spellcheck="false" placeholder="Your wget command will appear here."></textarea>
+        <p class="note muted">For POSIX shells. Your key is sent in a request header.</p>
+      </div>
+    </div>
+    <p id="key-note" class="note muted">Your key is not saved by this page.
+      Links and commands contain it; do not share them. Download URLs may
+      appear in browser history, and commands may appear in shell history.</p>
+  </form>
+  <noscript>
+    <p>Enable JavaScript to use the form, or prepend this site's origin and a
+      slash to your HTTPS asset URL. Append
+      <code>?x_holyproxy_key=YOUR_KEY</code> (use <code>&amp;</code> if a query
+      already exists). For command-line use, send your key in the
+      <code>X-Holyproxy-Key</code> request header instead.</p>
+  </noscript>
+  <section id="formats" aria-labelledby="formats-title">
+    <h2 id="formats-title">Use an asset link</h2>
+    <p class="muted">Copy the link to a file under a release's Assets section.
+      Release pages and source archives are not supported.</p>
+    <code class="example">github.com/OWNER/REPO/releases/download/TAG/FILE</code>
+    <code class="example">github.com/OWNER/REPO/releases/latest/download/FILE</code>
+  </section>
+</main>
+<script>
+  'use strict';
+  const form = document.getElementById('download-form');
+  const asset = document.getElementById('asset');
+  const key = document.getElementById('key');
+  const error = document.getElementById('error');
+  const direct = document.getElementById('direct-link');
+  const outputs = ['link', 'curl', 'wget'].map(
+    (name) => document.getElementById(`${name}-output`));
+  const empty = document.getElementById('empty');
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  form.addEventListener('submit', (event) => event.preventDefault());
+
+  function selectTab(tab) {
+    for (const candidate of tabs) {
+      const selected = candidate === tab;
+      candidate.setAttribute('aria-selected', String(selected));
+      candidate.tabIndex = selected ? 0 : -1;
+      document.getElementById(candidate.getAttribute('aria-controls')).hidden = !selected;
+    }
+  }
+  for (const [index, tab] of tabs.entries()) {
+    tab.addEventListener('click', () => selectTab(tab));
+    tab.addEventListener('keydown', (event) => {
+      let next;
+      if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+      if (event.key === 'ArrowLeft') next = (index + tabs.length - 1) % tabs.length;
+      if (event.key === 'Home') next = 0;
+      if (event.key === 'End') next = tabs.length - 1;
+      if (next === undefined) return;
+      event.preventDefault();
+      selectTab(tabs[next]);
+      tabs[next].focus();
+    });
+  }
+
+  // Single-quote all shell arguments, including embedded apostrophes.
+  function shellQuote(value) {
+    return "'" + value.replaceAll("'", "'\"'\"'") + "'";
+  }
+
+  function update() {
+    error.textContent = '';
+    asset.removeAttribute('aria-invalid');
+    key.removeAttribute('aria-invalid');
+    direct.hidden = true;
+    direct.removeAttribute('href');
+    for (const output of outputs) output.value = '';
+    empty.hidden = false;
+    function invalid(input, message) {
+      error.textContent = message;
+      input.setAttribute('aria-invalid', 'true');
+    }
+    const source = asset.value.trim();
+    const apiKey = key.value.trim();
+    if (!source) return;
+    let url;
+    try {
+      if (/\s/.test(source)) throw new Error('Whitespace in URL');
+      url = new URL(source.startsWith('github.com/') ? `https://${source}` : source);
+    } catch {
+      invalid(asset, 'Enter a GitHub Release asset URL.');
+      return;
+    }
+    if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.port ||
+        url.username || url.password || source.includes('#') ||
+        !/^\/[^/]+\/[^/]+\/releases\/(?:download\/[^/]+|latest\/download)\/[^/]+$/.test(url.pathname)) {
+      invalid(asset, 'Use an HTTPS github.com Release asset link without credentials or a fragment.');
+      return;
+    }
+    if (url.searchParams.has('x_holyproxy_key')) {
+      invalid(asset, 'Remove x_holyproxy_key from the asset URL and use the API key field.');
+      return;
+    }
+    if (!apiKey) return;
+    if (/[^A-Za-z0-9_-]/.test(apiKey)) {
+      invalid(key, 'Enter a valid API key using letters, numbers, underscores or hyphens.');
+      return;
+    }
+    const proxy = `${location.origin}/https://github.com${url.pathname}${url.search}`;
+    const link = `${proxy}${url.search ? '&' : '?'}x_holyproxy_key=${encodeURIComponent(apiKey)}`;
+    let filename = url.pathname.split('/').pop();
+    try { filename = decodeURIComponent(filename); } catch { /* Retain escaped name. */ }
+    filename = filename.replace(/[\/\\\x00-\x1f\x7f]/g, '_');
+    if (filename === '.' || filename === '..') filename = 'download';
+    const header = shellQuote(`X-Holyproxy-Key: ${apiKey}`);
+    outputs[0].value = link;
+    outputs[1].value = `curl --fail --location --globoff --header ${header} --output ${shellQuote(filename)} -- ${shellQuote(proxy)}`;
+    outputs[2].value = `wget --header=${header} --output-document=${shellQuote(filename)} -- ${shellQuote(proxy)}`;
+    direct.href = link;
+    direct.hidden = false;
+    empty.hidden = true;
+  }
+  form.addEventListener('input', update);
+  window.addEventListener('pageshow', update);
+  document.getElementById('methods').hidden = false;
+  update();
+</script>
+</body>
+</html>

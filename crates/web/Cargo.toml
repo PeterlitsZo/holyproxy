@@ -1,0 +1,4 @@
+[package]
+name = "holyproxy-web"
+version.workspace = true
+edition.workspace = true

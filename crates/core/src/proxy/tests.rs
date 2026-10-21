@@ -595,7 +595,7 @@ fn audits_request_metadata_errors_as_anonymous() {
         let audit = MockAudit::default();
         let client = MockClient::default();
         assert_eq!(
-            block_on(proxy(
+            block_on(crate::handle_request(
                 &client,
                 &AllowedKeys,
                 &audit,

@@ -7,12 +7,13 @@ import {
 } from "miniflare";
 
 const base = new URL("../crates/cloudflare-workers/", import.meta.url);
+const indexHtml = await readFile(new URL("../web/assets/index.html", base), "utf8");
 const schema = await readFile(new URL("migrations/0001_storage.sql", base), "utf8");
 const increment = await readFile(new URL("sql/increment_usage.sql", base), "utf8");
 const statements = schema.split(";").map((s) => s.trim()).filter(Boolean);
 const errors = [];
 const outgoing = [];
-const mf = new Miniflare(convertV4MiniflareOptions({
+const options = {
   modules: [
     { type: "ESModule", path: fileURLToPath(new URL("build/index.js", base)) },
     { type: "CompiledWasm", path: fileURLToPath(new URL("build/index_bg.wasm", base)) },
@@ -36,7 +37,9 @@ const mf = new Miniflare(convertV4MiniflareOptions({
     const status = Number(url.pathname.split("/").at(-1));
     return new Response(status === 304 || request.method === "HEAD" ? null : "download", { status });
   },
-}));
+};
+const mf = new Miniflare(convertV4MiniflareOptions(options));
+const withoutD1 = new Miniflare(convertV4MiniflareOptions({ ...options, d1Databases: {} }));
 
 async function eventually(check) {
   const deadline = Date.now() + 10000;
@@ -49,7 +52,44 @@ async function eventually(check) {
 
 try {
   const db = await mf.getD1Database("HOLYPROXY");
+  // The compiled module serves its embedded page even before D1 has tables.
+  async function checkIndex(runtime = mf) {
+    const home = await runtime.dispatchFetch("https://proxy.example/");
+    assert.equal(home.status, 200);
+    const html = await home.text();
+    assert.equal(html, indexHtml);
+    assert(html.includes("<style>") && html.includes("<script>"));
+    assert(html.includes('id="download-form"'));
+    for (const [name, value] of Object.entries({
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+    })) assert.equal(home.headers.get(name), value);
+    const head = await runtime.dispatchFetch("https://proxy.example/", { method: "HEAD" });
+    assert.equal(head.status, 200);
+    assert.equal(await head.text(), "");
+    for (const [name, value] of home.headers) {
+      if (!["content-length", "transfer-encoding"].includes(name)) {
+        assert.equal(head.headers.get(name), value);
+      }
+    }
+    const post = await runtime.dispatchFetch("https://proxy.example/", { method: "POST" });
+    assert.equal(post.status, 405);
+    assert.equal(post.headers.get("allow"), "GET, HEAD");
+    await post.text();
+    const query = await runtime.dispatchFetch("https://proxy.example/?x_holyproxy_key=ignored");
+    assert.equal(await query.text(), html);
+    assert.equal(outgoing.length, 0);
+  }
+  await checkIndex(withoutD1);
+  await checkIndex();
   await db.batch(statements.map((sql) => db.prepare(sql)));
+  await checkIndex();
+  // Let any accidentally scheduled background work finish before inspecting D1.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM usage_buckets").first()).n, 0);
+  assert.equal(errors.length, 0);
   const addKey = async (key, username) => {
     const hash = createHash("sha256").update(key).digest("hex");
     await db.prepare("INSERT INTO api_keys (key_hash, username) VALUES (?1, ?2)")
@@ -132,5 +172,5 @@ try {
   assert.deepEqual(await counts("", "anonymous"), { requests: 1, successes: 0, failures: 1 });
   console.log("Workers/D1 integration passed: identity, concurrency, buckets, outcomes, background failures.");
 } finally {
-  await mf.dispose();
+  await Promise.all([mf.dispose(), withoutD1.dispose()]);
 }

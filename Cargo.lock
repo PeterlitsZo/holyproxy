@@ -233,10 +233,15 @@ name = "holyproxy-core"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "holyproxy-web",
  "regex",
  "sha2",
  "url",
 ]
+
+[[package]]
+name = "holyproxy-web"
+version = "0.1.0"
 
 [[package]]
 name = "http"
