@@ -498,6 +498,8 @@ fn audits_final_responses_once_without_consuming_bodies() {
                 &*audit.0.borrow(),
                 &[AuditEvent {
                     username: Some("alice".into()),
+                    method: Some(method.into()),
+                    path: Some(request(method).url.path().into()),
                     outcome: if status < 400 {
                         AuditOutcome::Success
                     } else {
@@ -583,6 +585,12 @@ fn audits_authenticated_errors_and_unauthenticated_requests() {
         assert_eq!(
             &*audit.0.borrow(),
             &[AuditEvent {
+                method: Some(if case == "method" { "POST" } else { "GET" }.into()),
+                path: Some(if case == "target" {
+                    "/invalid".into()
+                } else {
+                    request("GET").url.path().into()
+                }),
                 username: username.map(str::to_owned),
                 outcome: AuditOutcome::Failure,
             }],
@@ -631,6 +639,8 @@ fn audits_request_metadata_errors_as_anonymous() {
             &*audit.0.borrow(),
             &[AuditEvent {
                 username: None,
+                method: Some("GET".into()),
+                path: (!url_error).then(|| request("GET").url.path().into()),
                 outcome: AuditOutcome::Failure
             }]
         );
@@ -744,7 +754,13 @@ fn git_upload_moves_body_and_preserves_response() {
     for name in ["Authorization", "Cookie", "Range", "X-Holyproxy-Key"] {
         assert!(sent[0].header(name).unwrap().is_none());
     }
+    assert_eq!(audit.0.borrow().len(), 1);
     assert_eq!(audit.0.borrow()[0].username.as_deref(), Some("alice"));
+    assert_eq!(audit.0.borrow()[0].method.as_deref(), Some("POST"));
+    assert_eq!(
+        audit.0.borrow()[0].path.as_deref(),
+        Some("/https://github.com/a/b.git/git-upload-pack")
+    );
 }
 
 #[test]
@@ -889,6 +905,8 @@ fn git_missing_credentials_challenges_without_lookup_or_fetch() {
             &*audit.0.borrow(),
             &[AuditEvent {
                 username: None,
+                method: Some(method.into()),
+                path: Some(git_request(method, suffix).url.path().into()),
                 outcome: AuditOutcome::Failure
             }]
         );
@@ -951,4 +969,31 @@ fn git_invalid_credentials_and_other_routes_do_not_challenge() {
         .unwrap_err(),
         ProxyError::Forbidden
     );
+}
+
+#[test]
+fn audit_sample_excludes_url_credentials_query_and_fragment() {
+    let client = MockClient::default();
+    let audit = MockAudit::default();
+    let mut req = request("GET");
+    req.headers.clear();
+    req.url = Url::parse("https://x_holyproxy_key:sample-secret@proxy.example/probe/%E4%B8%AD?x_holyproxy_key=sample-secret&token=other-secret#fragment-secret").unwrap();
+    let keys = MockKeys {
+        result: Ok(None),
+        hashes: RefCell::default(),
+    };
+    assert_eq!(
+        block_on(proxy(&client, &keys, &audit, req)).unwrap_err(),
+        ProxyError::Forbidden
+    );
+    assert_eq!(
+        &*audit.0.borrow(),
+        &[AuditEvent {
+            username: None,
+            outcome: AuditOutcome::Failure,
+            method: Some("GET".into()),
+            path: Some("/probe/%E4%B8%AD".into()),
+        }]
+    );
+    assert!(client.requests.borrow().is_empty());
 }

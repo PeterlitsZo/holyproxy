@@ -115,7 +115,7 @@ impl HttpClient for WorkersClient {
 
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, ctx: Context) -> Result<Response> {
-    let audit = WorkersAudit::new(env.clone(), ctx, Date::now().as_millis() / 1000);
+    let audit = WorkersAudit::new(env.clone(), ctx, Date::now().as_millis());
     let response = match handle_request(
         &WorkersClient,
         &WorkersApiKeys(env),

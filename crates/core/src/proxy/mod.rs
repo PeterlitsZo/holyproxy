@@ -1,4 +1,4 @@
-use crate::audit::{Audit, AuditEvent, AuditOutcome};
+use crate::audit::{Audit, AuditEvent, AuditOutcome, sample_method, sample_path};
 use crate::auth::{ApiKeyStore, credentials};
 use std::future::Future;
 use url::Url;
@@ -102,13 +102,20 @@ pub async fn proxy<C: HttpClient>(
     audit: &impl Audit,
     request: impl ProxyRequest<Error = C::Error, Body = C::Body>,
 ) -> Result<C::Response, ProxyError<C::Error>> {
+    let method = sample_method(&request.method());
+    let path = request.url().ok().map(|url| sample_path(url.path()));
     let mut username = None;
     let result = proxy_inner(client, keys, request, &mut username).await;
     let outcome = match &result {
         Ok(response) if (200..400).contains(&response.status()) => AuditOutcome::Success,
         _ => AuditOutcome::Failure,
     };
-    audit.record(AuditEvent { username, outcome });
+    audit.record(AuditEvent {
+        username,
+        outcome,
+        method,
+        path,
+    });
     result
 }
 

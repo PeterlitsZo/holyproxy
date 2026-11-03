@@ -89,6 +89,39 @@ DELETE FROM api_keys WHERE key_hash = '<printed hash>';
 SELECT * FROM usage_buckets ORDER BY bucket_start DESC;
 ```
 
+## Recent request samples
+
+Each usage bucket keeps one latest request sample: `last_method`, `last_path`,
+and `last_seen_at` (Unix milliseconds at Worker entry). `bucket_start` remains
+Unix seconds. Samples become visible after processing and background persistence;
+they are neither random samples nor a complete access log. Older background writes
+still increment counts but cannot replace a newer sample. Equal timestamps keep
+the first written sample; cross-instance clock skew prevents strict global ordering.
+
+Only the parsed incoming path is stored, without decoding percent escapes. Query,
+fragment, URL userinfo, headers (including Authorization), IP and body are excluded.
+Methods must be valid ASCII HTTP tokens of at most 32 characters, otherwise NULL.
+Paths are capped at 1024 bytes without cutting UTF-8 characters or percent escapes;
+unreadable URLs produce NULL paths. Paths can still contain secrets placed there
+by clients: this is not arbitrary secret detection. Treat paths as untrusted text
+and escape them if rendering HTML.
+
+Existing rows have NULL sample fields until another request updates that bucket;
+historical samples cannot be reconstructed. Anonymous failures include invalid
+credentials and normal Git 401 probes, so a last sample does not explain every
+failure in the bucket. The public homepage is not counted. Background writes are
+best effort; failures can lose both counts and samples without failing downloads.
+
+```sql
+SELECT datetime(bucket_start, 'unixepoch') AS bucket_utc,
+       requests, successes, failures, last_method, last_path,
+       datetime(last_seen_at / 1000.0, 'unixepoch') AS last_seen_utc
+FROM usage_buckets
+WHERE principal_type = 'anonymous'
+ORDER BY bucket_start DESC
+LIMIT 50;
+```
+
 ## Deployment
 
 From `crates/cloudflare-workers`, copy the generic config to a private file:
@@ -100,6 +133,12 @@ npx wrangler d1 create holyproxy --binding HOLYPROXY \
 npx wrangler d1 migrations apply HOLYPROXY --remote \
   --config wrangler.private.jsonc
 ```
+
+Apply migrations before deploying the updated Worker, including on existing
+installations. Migration `0002_usage_last_request.sql` adds nullable columns and
+preserves counters; the old Worker remains compatible. Deploying new code before
+the migration causes audit writes to fail. To roll back, restore the previous
+Worker version and retain the added columns and data.
 
 Keep real IDs in the ignored private config. Import keys before deploying.
 Old KV `1` needs a username. Use `--remote --config wrangler.private.jsonc`

@@ -12,6 +12,9 @@
 - Before staging or committing, inspect both the working tree and staged changes
   for private configuration. Verify private files are ignored and not tracked.
 
+## Behavior
+
+- DO NOT add tests.
 
 ## When You Need to Commit
 
