@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/web", "crates/cloudflare-workers"]
+members = ["crates/core", "crates/web", "crates/cloudflare-workers", "crates/client"]
 resolver = "2"
 
 [workspace.package]

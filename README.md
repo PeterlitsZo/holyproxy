@@ -31,6 +31,32 @@ challenge when credentials are missing, so standard Git clients authenticate aut
 URLs and commands containing keys may appear in
 history; do not share them. The public homepage does not validate credentials.
 
+## Local client
+
+Install with `cargo install --path crates/client`, then run:
+
+```sh
+holyproxy-client --remote https://proxy.example --key "$HOLYPROXY_KEY" \
+  --listen 127.0.0.1:10000
+curl http://127.0.0.1:10000/https://github.com/OWNER/REPO/releases/download/TAG/FILE
+git clone http://127.0.0.1:10000/https://github.com/OWNER/REPO.git
+```
+
+`--remote` and `--key` are required; `--listen` defaults to `127.0.0.1:10042`.
+The remote URL accepts HTTP(S) and an optional path prefix, without credentials,
+query or fragment. The client appends the incoming path and query and sets
+`X-Holyproxy-Key`, replacing any supplied header of that name. Other authentication
+headers and query parameters pass through unchanged, so do not supply conflicting keys.
+
+Methods, request bodies, response statuses, headers and bodies are forwarded with
+streaming, without automatic redirects, decompression or retries. Host and hop-by-hop
+headers are handled for the new connection. Remote connection failures return 502.
+The client has no GitHub route or authentication policy; supported targets and
+methods remain controlled by the remote service. It is an HTTP URL-prefix relay,
+not a CONNECT/HTTPS_PROXY server, and does not tunnel protocol upgrades.
+Anyone who can reach the listener can use its configured key; the default binds
+only to loopback. Stop with Ctrl-C (active transfers are interrupted).
+
 ## Git HTTPS
 
 Use the repository's current canonical URL ending in `.git`. No extra Git
