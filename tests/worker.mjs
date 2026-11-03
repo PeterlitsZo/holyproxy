@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+const runFile = promisify(execFile);
+const basic = (key) => `Basic ${Buffer.from(`x_holyproxy_key:${key}`).toString("base64")}`;
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -14,6 +18,8 @@ const statements = schema.split(";").map((s) => s.trim()).filter(Boolean);
 const errors = [];
 const outgoing = [];
 const options = {
+  host: "127.0.0.1",
+  port: 0,
   modules: [
     { type: "ESModule", path: fileURLToPath(new URL("build/index.js", base)) },
     { type: "CompiledWasm", path: fileURLToPath(new URL("build/index_bg.wasm", base)) },
@@ -26,6 +32,7 @@ const options = {
   outboundService: async (request) => {
     outgoing.push(request);
     assert.equal(request.headers.get("X-Holyproxy-Key"), null);
+    assert.equal(request.headers.get("Authorization"), null);
     const url = new URL(request.url);
     assert.equal(url.searchParams.has("x_holyproxy_key"), false);
     if (url.hostname === "github.com") {
@@ -145,6 +152,70 @@ try {
     assert.equal(row.requests, row.successes + row.failures);
   }
 
+  // Exercise Basic through the real Worker, including merged duplicate headers.
+  await addKey("basic-test-key", "basic-user");
+  const downloadUrl = "https://proxy.example/github.com/a/b/releases/download/v1/200";
+  const beforeBasic = outgoing.length;
+  for (const method of ["GET", "HEAD"]) {
+    const response = await mf.dispatchFetch(downloadUrl, {
+      method, headers: { Authorization: basic("basic-test-key"), Range: "bytes=0-31" },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), method === "HEAD" ? "" : "download");
+  }
+  assert.equal(outgoing.length, beforeBasic + 4);
+  for (const sent of outgoing.slice(beforeBasic)) assert.equal(sent.headers.get("Range"), "bytes=0-31");
+  const combined = await mf.dispatchFetch(`${downloadUrl}?x_holyproxy_key=basic-test-key`, {
+    headers: { Authorization: basic("basic-test-key"), "X-Holyproxy-Key": "basic-test-key" },
+  });
+  assert.equal(combined.status, 200);
+  await combined.text();
+  const invalidHeaders = [
+    [["Authorization", basic("unknown-key")]],
+    [["Authorization", "Basic !!!"], ["X-Holyproxy-Key", "basic-test-key"]],
+    [["Authorization", basic("basic-test-key")], ["X-Holyproxy-Key", "bob-key"]],
+    [["Authorization", basic("basic-test-key")], ["Authorization", basic("basic-test-key")]],
+    [["Authorization", "Bearer ignored"], ["Authorization", basic("basic-test-key")]],
+  ];
+  const beforeInvalid = outgoing.length;
+  for (const headers of invalidHeaders) {
+    const response = await mf.dispatchFetch(downloadUrl, { headers });
+    assert.equal(response.status, 403);
+    await response.text();
+  }
+  const conflict = await mf.dispatchFetch(`${downloadUrl}?x_holyproxy_key=bob-key`, {
+    headers: { Authorization: basic("basic-test-key") },
+  });
+  assert.equal(conflict.status, 403);
+  await conflict.text();
+  assert.equal(outgoing.length, beforeInvalid);
+
+  // curl must convert URL userinfo itself; dispatchFetch cannot prove that behavior.
+  const curlUrl = new URL(new URL(downloadUrl).pathname, await mf.ready);
+  assert.equal(curlUrl.hostname, "127.0.0.1");
+  curlUrl.username = "x_holyproxy_key";
+  async function curlDownload(password) {
+    curlUrl.password = password;
+    try {
+      return (await runFile("curl", ["--disable", "--silent", "--show-error",
+        "--noproxy", "*", "--max-time", "10", "--write-out", "\n%{http_code}",
+        "--url", curlUrl.href], { timeout: 15000 })).stdout;
+    } catch (error) {
+      if (error.code === "ENOENT") throw new Error("Worker integration tests require curl on PATH");
+      throw error;
+    }
+  }
+  const beforeCurl = outgoing.length;
+  assert.equal(await curlDownload("basic-test-key"), "download\n200");
+  assert.equal(outgoing.length, beforeCurl + 2);
+  assert.equal(await curlDownload("wrong-password"), "Forbidden\n403");
+  assert.equal(outgoing.length, beforeCurl + 2);
+  await eventually(async () => (await counts("basic-user")).requests === 4);
+  assert.deepEqual(await counts("basic-user"), { requests: 4, successes: 4, failures: 0 });
+  await eventually(async () => (await counts("", "anonymous")).requests === 9);
+  assert.deepEqual(await counts("", "anonymous"), { requests: 9, successes: 0, failures: 9 });
+  assert.equal((await counts("x_holyproxy_key")).requests, 0);
+
   // Exercise the same SQL across historical buckets and principal categories.
   await Promise.all([
     db.prepare(increment).bind(900, "user", "alice", 1, 0).run(),
@@ -170,7 +241,13 @@ try {
   assert.equal(await request("alice-key"), 503);
   await eventually(async () => (await counts("", "anonymous")).requests === 1);
   assert.deepEqual(await counts("", "anonymous"), { requests: 1, successes: 0, failures: 1 });
-  console.log("Workers/D1 integration passed: identity, concurrency, buckets, outcomes, background failures.");
+  const unavailable = await mf.dispatchFetch(downloadUrl, {
+    headers: { Authorization: basic("basic-test-key") },
+  });
+  assert.equal(unavailable.status, 503);
+  await unavailable.text();
+  await eventually(async () => (await counts("", "anonymous")).requests === 2);
+  console.log("Workers/D1 integration passed: identity, concurrency, buckets, outcomes, background failures, Basic auth, curl userinfo.");
 } finally {
   await Promise.all([mf.dispose(), withoutD1.dispose()]);
 }

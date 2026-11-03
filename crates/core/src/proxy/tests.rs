@@ -1,5 +1,6 @@
 use super::*;
 use crate::ApiKeyRecord;
+use base64::{Engine, engine::general_purpose::STANDARD};
 use futures::executor::block_on;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -359,7 +360,8 @@ impl ApiKeyStore for MockKeys {
 
 #[test]
 fn authorizes_each_transport_once_before_redirects() {
-    for (header, query) in [(true, false), (false, true), (true, true)] {
+    for (mask, method) in (1..8).flat_map(|mask| ["GET", "HEAD"].map(|method| (mask, method))) {
+        let (header, query, basic) = (mask & 1 != 0, mask & 2 != 0, mask & 4 != 0);
         let keys = MockKeys {
             result: Ok(Some(ApiKeyRecord {
                 username: "alice".into(),
@@ -373,7 +375,10 @@ fn authorizes_each_transport_once_before_redirects() {
             )),
             Ok(Response::text(200, "download", &[]).unwrap()),
         ]);
-        let mut req = request("GET");
+        let mut req = request(method);
+        if basic {
+            set_basic(&mut req, "abc");
+        }
         req.headers.retain(|(name, _)| name != "X-Holyproxy-Key");
         if header {
             req.headers.push(("x-holyproxy-key".into(), "abc".into()));
@@ -381,7 +386,9 @@ fn authorizes_each_transport_once_before_redirects() {
         if query {
             req.url.set_query(Some("x=%2F&x_holyproxy_key=abc&x=+"));
         }
-        block_on(proxy(&client, &keys, &MockAudit::default(), req)).unwrap();
+        let audit = MockAudit::default();
+        block_on(proxy(&client, &keys, &audit, req)).unwrap();
+        assert_eq!(audit.0.borrow()[0].username.as_deref(), Some("alice"));
         assert_eq!(
             &*keys.hashes.borrow(),
             &["ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"]
@@ -394,6 +401,9 @@ fn authorizes_each_transport_once_before_redirects() {
         assert_eq!(sent[1].url.query(), Some("sig=%2F"));
         for req in sent.iter() {
             assert!(req.header("X-Holyproxy-Key").unwrap().is_none());
+            assert!(req.header("Authorization").unwrap().is_none());
+            assert_eq!(req.method, method);
+            assert_eq!(req.header("Range").unwrap().as_deref(), Some("bytes=0-31"));
         }
     }
 }
@@ -612,5 +622,60 @@ fn audits_request_metadata_errors_as_anonymous() {
             }]
         );
         assert!(client.requests.borrow().is_empty());
+    }
+}
+
+fn set_basic(req: &mut Request, key: &str) {
+    req.headers
+        .retain(|(name, _)| !name.eq_ignore_ascii_case("Authorization"));
+    req.headers.push((
+        "Authorization".into(),
+        format!(
+            "Basic {}",
+            STANDARD.encode(format!("x_holyproxy_key:{key}"))
+        ),
+    ));
+}
+
+#[test]
+fn basic_failures_do_not_fetch() {
+    for (authorization, result, lookups, expected) in [
+        ("Basic !!!".to_owned(), Ok(None), 0, ProxyError::Forbidden),
+        (
+            format!("Basic {}", STANDARD.encode("x_holyproxy_key:other")),
+            Ok(None),
+            0,
+            ProxyError::Forbidden,
+        ),
+        (
+            format!("Basic {}", STANDARD.encode("x_holyproxy_key:test-key")),
+            Ok(None),
+            1,
+            ProxyError::Forbidden,
+        ),
+        (
+            format!("Basic {}", STANDARD.encode("x_holyproxy_key:test-key")),
+            Err("D1 unavailable"),
+            1,
+            ProxyError::AuthStore("D1 unavailable"),
+        ),
+    ] {
+        let keys = MockKeys {
+            result,
+            hashes: RefCell::default(),
+        };
+        let client = MockClient::default();
+        let audit = MockAudit::default();
+        let mut req = request("GET");
+        req.headers.retain(|(name, _)| name != "Authorization");
+        req.headers.push(("Authorization".into(), authorization));
+        assert_eq!(
+            block_on(proxy(&client, &keys, &audit, req)).unwrap_err(),
+            expected
+        );
+        assert_eq!(keys.hashes.borrow().len(), lookups);
+        assert!(client.requests.borrow().is_empty());
+        assert_eq!(audit.0.borrow()[0].username, None);
+        assert_eq!(audit.0.borrow()[0].outcome, AuditOutcome::Failure);
     }
 }

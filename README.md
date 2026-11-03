@@ -11,10 +11,22 @@ Open `/` for instructions and a download form, or set `HOLYPROXY_KEY` and run:
 asset='github.com/OWNER/REPO/releases/download/TAG/FILE'
 curl -H "X-Holyproxy-Key: $HOLYPROXY_KEY" "https://proxy.example/$asset"
 curl "https://proxy.example/$asset?x_holyproxy_key=$HOLYPROXY_KEY"
+curl -u "x_holyproxy_key:$HOLYPROXY_KEY" "https://proxy.example/$asset"
+curl "https://x_holyproxy_key:$HOLYPROXY_KEY@proxy.example/$asset"
 ```
 
 Credentials must agree; duplicates/invalid keys return 403, auth errors 503.
-Credentials are stripped upstream. Prefer headers to avoid keys in URL logs.
+Credentials are stripped upstream, including on redirects. Prefer headers to avoid
+keys in URL logs. Basic Auth uses the fixed username `x_holyproxy_key` and your API
+key as the password; usage still belongs to the user associated with that key.
+All supplied Basic/header/query keys must agree. Malformed Basic credentials are
+rejected even when another key is valid. Other Authorization schemes are ignored.
+
+Use HTTPS: Basic Auth encodes credentials; it does not encrypt them. URL userinfo
+works with clients such as curl that proactively convert it to Basic Auth; browser
+navigation and frontend fetch are not supported ways to use this URL format.
+There is no 401 login challenge. URLs and commands containing keys may appear in
+history; do not share them. The public homepage does not validate credentials.
 
 ## Keys and D1
 
@@ -57,4 +69,5 @@ writes may lose counts. Downloads continue; access logging is disabled.
 
 Setup (Rust 2024, Node.js/npm): `rustup target add wasm32-unknown-unknown`,
 `cargo install worker-build --version 0.8.7 --locked`, then `npm ci`.
+Worker integration tests also require `curl` on PATH; downloads use a local mock upstream.
 At repo root: `npm run dev`, `cargo test --workspace`, `npm run test:worker`.

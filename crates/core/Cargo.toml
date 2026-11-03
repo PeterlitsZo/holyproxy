@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+base64 = "0.22"
 holyproxy-web = { path = "../web" }
 regex = "1"
 sha2 = "0.10"

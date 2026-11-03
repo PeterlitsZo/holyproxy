@@ -91,41 +91,57 @@ pub async fn proxy<C: HttpClient>(
 
 async fn proxy_inner<C: HttpClient>(
     client: &C,
-    keys: &impl ApiKeyStore<Error = C::Error>,
+    key_store: &impl ApiKeyStore<Error = C::Error>,
     request: impl ProxyRequest<Error = C::Error>,
     username: &mut Option<String>,
 ) -> Result<C::Response, ProxyError<C::Error>> {
     let mut incoming = request.url().map_err(ProxyError::Runtime)?;
+
+    // Extract the credential.
     let header = request
         .header("X-Holyproxy-Key")
         .map_err(ProxyError::Runtime)?;
-    let (digest, query) =
-        credentials(header.as_deref(), incoming.query()).ok_or(ProxyError::Forbidden)?;
-    let identity = keys
+    let authorization = request
+        .header("Authorization")
+        .map_err(ProxyError::Runtime)?;
+    let (digest, query) = credentials(
+        header.as_deref(),
+        incoming.query(),
+        authorization.as_deref(),
+    )
+    .ok_or(ProxyError::Forbidden)?;
+
+    // Check if the user have the right to access this proxy.
+    let identity = key_store
         .contains(&digest)
         .await
         .map_err(ProxyError::AuthStore)?
         .ok_or(ProxyError::Forbidden)?;
     *username = Some(identity.username);
-    incoming.set_query(query.as_deref());
-    let method = request.method();
 
+    // Change the query.
+    incoming.set_query(query.as_deref());
+
+    // Only support GET and HEAD now.
+    let method = request.method();
     if !matches!(method.as_str(), "GET" | "HEAD") {
         return Err(ProxyError::UnsupportedMethod);
     }
 
+    // Build the URL.
     let Some(mut target) = release_url(incoming.path(), incoming.query()) else {
         return Err(ProxyError::InvalidTarget);
     };
 
+    // Build the headers.
     let mut headers = vec![("User-Agent".into(), "holyproxy".into())];
-
     for name in DOWNLOAD_HEADERS {
         if let Some(value) = request.header(name).map_err(ProxyError::Runtime)? {
             headers.push(((*name).into(), value));
         }
     }
 
+    // Do the proxy.
     for hop in 0..=10 {
         let response = client
             .fetch(&target, &method, &headers)
