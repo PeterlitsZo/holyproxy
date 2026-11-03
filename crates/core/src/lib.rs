@@ -1,4 +1,4 @@
-//! Platform-independent routing, homepage responses, and release downloads.
+//! Platform-independent routing, homepage responses, Release downloads, and Git pulls.
 mod audit;
 mod auth;
 mod proxy;

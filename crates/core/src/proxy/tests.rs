@@ -9,6 +9,7 @@ struct Request {
     method: String,
     url: Url,
     headers: Vec<(String, String)>,
+    upload: Option<Vec<u8>>,
 }
 
 // Deliberately neither Clone nor readable through ProxyResponse.
@@ -30,6 +31,10 @@ struct MockClient {
 
 impl ProxyRequest for Request {
     type Error = &'static str;
+    type Body = Vec<u8>;
+    fn take_body(&mut self) -> Result<Option<Self::Body>, Self::Error> {
+        Ok(self.upload.take())
+    }
 
     fn method(&self) -> String {
         self.method.clone()
@@ -70,17 +75,20 @@ impl ProxyResponse for Response {
 impl HttpClient for MockClient {
     type Error = &'static str;
     type Response = Response;
+    type Body = Vec<u8>;
 
     async fn fetch(
         &self,
         url: &Url,
         method: &str,
         headers: &[(String, String)],
+        body: Option<Self::Body>,
     ) -> Result<Response, Self::Error> {
         self.requests.borrow_mut().push(Request {
             method: method.into(),
             url: url.clone(),
             headers: headers.to_vec(),
+            upload: body,
         });
 
         self.responses
@@ -100,6 +108,7 @@ fn header(headers: &[(String, String)], name: &str) -> Option<String> {
 fn request(method: &str) -> Request {
     Request {
         method: method.into(),
+        upload: None,
         url: Url::parse("https://proxy.example/github.com/a/b/releases/latest/download/f?x=%2F")
             .unwrap(),
         headers: vec![
@@ -126,7 +135,7 @@ fn rejects_invalid_requests_without_fetching() {
     ))
     .unwrap_err();
 
-    assert_eq!(error, ProxyError::UnsupportedMethod);
+    assert_eq!(error, ProxyError::UnsupportedMethod("GET, HEAD"));
 
     let mut invalid = request("GET");
     invalid.url = Url::parse("https://proxy.example/https://example.com/f").unwrap();
@@ -297,14 +306,14 @@ fn maps_errors_to_public_responses() {
             "Authorization service unavailable",
         ),
         (
-            ProxyError::UnsupportedMethod,
+            ProxyError::UnsupportedMethod("GET, HEAD"),
             405,
-            "Only GET and HEAD are supported",
+            "Method not allowed for this endpoint",
         ),
         (
             ProxyError::InvalidTarget,
             400,
-            "Expected a GitHub Release attachment URL",
+            "Expected a GitHub Release attachment or Git Smart HTTP URL",
         ),
         (
             ProxyError::InvalidRedirect,
@@ -541,7 +550,7 @@ fn audits_authenticated_errors_and_unauthenticated_requests() {
             }
             "method" => {
                 req.method = "POST".into();
-                (ProxyError::UnsupportedMethod, Some("alice"))
+                (ProxyError::UnsupportedMethod("GET, HEAD"), Some("alice"))
             }
             "target" => {
                 req.url.set_path("/invalid");
@@ -587,6 +596,10 @@ fn audits_request_metadata_errors_as_anonymous() {
     struct BrokenRequest(bool);
     impl ProxyRequest for BrokenRequest {
         type Error = &'static str;
+        type Body = Vec<u8>;
+        fn take_body(&mut self) -> Result<Option<Self::Body>, Self::Error> {
+            panic!("must not read body")
+        }
         fn method(&self) -> String {
             "GET".into()
         }
@@ -678,4 +691,264 @@ fn basic_failures_do_not_fetch() {
         assert_eq!(audit.0.borrow()[0].username, None);
         assert_eq!(audit.0.borrow()[0].outcome, AuditOutcome::Failure);
     }
+}
+
+fn git_request(method: &str, suffix: &str) -> Request {
+    let mut req = request(method);
+    req.url = Url::parse(&format!(
+        "https://proxy.example/https://github.com/a/b.git/{suffix}"
+    ))
+    .unwrap();
+    req.headers.retain(|(name, _)| name != "X-Holyproxy-Key");
+    set_basic(&mut req, "test-key");
+    req.headers.extend([
+        ("Git-Protocol".into(), "version=2".into()),
+        (
+            "Content-Type".into(),
+            "application/x-git-upload-pack-request; charset=binary".into(),
+        ),
+    ]);
+    req
+}
+
+#[test]
+fn git_upload_moves_body_and_preserves_response() {
+    let client = MockClient::default();
+    client.responses.borrow_mut().push_back(Ok(Response::text(
+        200,
+        "pack",
+        &[("Content-Type", "application/x-git-upload-pack-result")],
+    )
+    .unwrap()));
+    let mut req = git_request("POST", "git-upload-pack");
+    let bytes = vec![0, 255, 128, 13, 10];
+    let ptr = bytes.as_ptr();
+    req.upload = Some(bytes);
+    let audit = MockAudit::default();
+    let response = block_on(proxy(&client, &AllowedKeys, &audit, req)).unwrap();
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        response.header("Content-Type").unwrap().as_deref(),
+        Some("application/x-git-upload-pack-result")
+    );
+    let sent = client.requests.borrow();
+    assert_eq!(sent[0].upload.as_ref().unwrap().as_ptr(), ptr);
+    assert_eq!(
+        sent[0].upload.as_deref(),
+        Some([0, 255, 128, 13, 10].as_slice())
+    );
+    assert_eq!(
+        sent[0].header("Git-Protocol").unwrap().as_deref(),
+        Some("version=2")
+    );
+    for name in ["Authorization", "Cookie", "Range", "X-Holyproxy-Key"] {
+        assert!(sent[0].header(name).unwrap().is_none());
+    }
+    assert_eq!(audit.0.borrow()[0].username.as_deref(), Some("alice"));
+}
+
+#[test]
+fn git_method_and_media_type_errors_do_not_fetch() {
+    for (method, suffix, expected) in [
+        (
+            "POST",
+            "info/refs?service=git-upload-pack",
+            ProxyError::UnsupportedMethod("GET"),
+        ),
+        (
+            "HEAD",
+            "info/refs?service=git-upload-pack",
+            ProxyError::UnsupportedMethod("GET"),
+        ),
+        (
+            "GET",
+            "git-upload-pack",
+            ProxyError::UnsupportedMethod("POST"),
+        ),
+        ("POST", "git-upload-pack", ProxyError::UnsupportedMediaType),
+    ] {
+        let client = MockClient::default();
+        let mut req = git_request(method, suffix);
+        req.headers.retain(|(name, _)| name != "Content-Type");
+        let error = block_on(proxy(&client, &AllowedKeys, &MockAudit::default(), req)).unwrap_err();
+        assert_eq!(error, expected);
+        let response = error_response::<Response>(error).unwrap();
+        if let ProxyError::UnsupportedMethod(allow) = expected {
+            assert_eq!(response.header("Allow").unwrap().as_deref(), Some(allow));
+        } else {
+            assert_eq!(response.status, 415);
+        }
+        assert!(client.requests.borrow().is_empty());
+    }
+}
+
+#[test]
+fn git_discovery_redirects_strip_credentials_and_post_never_replays() {
+    let client = MockClient::default();
+    client.responses.borrow_mut().extend([
+        Ok(redirect(
+            "/other/repo.git/info/refs?service=git-upload-pack",
+        )),
+        Ok(Response::text(200, "refs", &[]).unwrap()),
+    ]);
+    let req = git_request(
+        "GET",
+        "info/refs?service=git-upload-pack&x_holyproxy_key=test-key",
+    );
+    block_on(proxy(&client, &AllowedKeys, &MockAudit::default(), req)).unwrap();
+    for sent in client.requests.borrow().iter() {
+        assert_eq!(sent.url.query(), Some("service=git-upload-pack"));
+        assert!(sent.upload.is_none());
+        assert!(sent.header("Authorization").unwrap().is_none());
+    }
+    for status in [301, 302, 303, 307, 308] {
+        let client = MockClient::default();
+        client.responses.borrow_mut().push_back(Ok(Response::text(
+            status,
+            "",
+            &[("Location", "/other/repo.git/git-upload-pack")],
+        )
+        .unwrap()));
+        assert_eq!(
+            block_on(proxy(
+                &client,
+                &AllowedKeys,
+                &MockAudit::default(),
+                git_request("POST", "git-upload-pack")
+            ))
+            .unwrap_err(),
+            ProxyError::InvalidRedirect
+        );
+        assert_eq!(client.requests.borrow().len(), 1);
+    }
+}
+
+#[test]
+fn git_discovery_rejects_missing_unsafe_and_looping_redirects() {
+    for location in [
+        None,
+        Some("https://evil.example/a/b.git/info/refs?service=git-upload-pack"),
+        Some("/a/b.git/info/refs?service=git-upload-pack"),
+    ] {
+        let client = MockClient::default();
+        let looping = location.is_some_and(|value| value.starts_with('/'));
+        let count = if looping { 11 } else { 1 };
+        for _ in 0..count {
+            client.responses.borrow_mut().push_back(Ok(Response::text(
+                302,
+                "",
+                &location
+                    .map(|value| vec![("Location", value)])
+                    .unwrap_or_default(),
+            )
+            .unwrap()));
+        }
+        assert_eq!(
+            block_on(proxy(
+                &client,
+                &AllowedKeys,
+                &MockAudit::default(),
+                git_request("GET", "info/refs?service=git-upload-pack")
+            ))
+            .unwrap_err(),
+            ProxyError::InvalidRedirect
+        );
+        assert_eq!(client.requests.borrow().len(), count);
+    }
+}
+
+#[test]
+fn git_missing_credentials_challenges_without_lookup_or_fetch() {
+    for (method, suffix) in [
+        ("GET", "info/refs?service=git-upload-pack"),
+        ("POST", "git-upload-pack"),
+    ] {
+        let keys = MockKeys {
+            result: Err("must not query"),
+            hashes: RefCell::default(),
+        };
+        let client = MockClient::default();
+        let audit = MockAudit::default();
+        let mut req = git_request(method, suffix);
+        req.headers.clear();
+        let error = block_on(proxy(&client, &keys, &audit, req)).unwrap_err();
+        assert_eq!(error, ProxyError::AuthenticationRequired);
+        let response = error_response::<Response>(error).unwrap();
+        assert_eq!(response.status, 401);
+        assert_eq!(
+            response.header("WWW-Authenticate").unwrap().as_deref(),
+            Some("Basic realm=\"holyproxy\"")
+        );
+        assert_eq!(
+            response.header("Cache-Control").unwrap().as_deref(),
+            Some("no-store")
+        );
+        assert!(keys.hashes.borrow().is_empty());
+        assert!(client.requests.borrow().is_empty());
+        assert_eq!(
+            &*audit.0.borrow(),
+            &[AuditEvent {
+                username: None,
+                outcome: AuditOutcome::Failure
+            }]
+        );
+    }
+}
+
+#[test]
+fn git_invalid_credentials_and_other_routes_do_not_challenge() {
+    for (suffix, headers) in [
+        (
+            "info/refs?service=git-upload-pack",
+            vec![("Authorization", "Basic !!!")],
+        ),
+        (
+            "info/refs?service=git-upload-pack",
+            vec![("Authorization", "Bearer other")],
+        ),
+        (
+            "info/refs?service=git-upload-pack",
+            vec![("X-Holyproxy-Key", "")],
+        ),
+        (
+            "info/refs?service=git-upload-pack&%78_holyproxy_key=",
+            vec![],
+        ),
+        ("info/refs?service=git-receive-pack", vec![]),
+        ("git-receive-pack", vec![]),
+    ] {
+        let client = MockClient::default();
+        let keys = MockKeys {
+            result: Err("must not query"),
+            hashes: RefCell::default(),
+        };
+        let mut req = git_request("GET", suffix);
+        req.headers = headers
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        let error = block_on(proxy(&client, &keys, &MockAudit::default(), req)).unwrap_err();
+        assert_eq!(error, ProxyError::Forbidden);
+        assert!(
+            error_response::<Response>(error)
+                .unwrap()
+                .header("WWW-Authenticate")
+                .unwrap()
+                .is_none()
+        );
+        assert!(keys.hashes.borrow().is_empty());
+        assert!(client.requests.borrow().is_empty());
+    }
+    let mut req = request("GET");
+    req.headers.clear();
+    assert_eq!(
+        block_on(proxy(
+            &MockClient::default(),
+            &AllowedKeys,
+            &MockAudit::default(),
+            req
+        ))
+        .unwrap_err(),
+        ProxyError::Forbidden
+    );
 }

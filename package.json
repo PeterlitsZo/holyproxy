@@ -4,7 +4,6 @@
   "scripts": {
     "dev": "wrangler dev --cwd crates/cloudflare-workers",
     "deploy": "wrangler deploy --config wrangler.private.jsonc --cwd crates/cloudflare-workers",
-    "test:worker": "npm run check:deploy && node tests/worker.mjs",
     "check:deploy": "wrangler deploy --dry-run --cwd crates/cloudflare-workers"
   },
   "devDependencies": {

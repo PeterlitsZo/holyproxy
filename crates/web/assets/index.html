@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <title>holyproxy — Release downloads</title>
+  <title>holyproxy — GitHub downloads</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23171717'/%3E%3Ctext x='8' y='24' font-size='26' fill='white'%3Eh%3C/text%3E%3C/svg%3E">
   <style>
     :root { color-scheme: light; font: 16px/1.6 system-ui, sans-serif;
@@ -125,6 +125,22 @@
       Release pages and source archives are not supported.</p>
     <code class="example">github.com/OWNER/REPO/releases/download/TAG/FILE</code>
     <code class="example">github.com/OWNER/REPO/releases/latest/download/FILE</code>
+  </section>
+  <section aria-labelledby="git-title">
+    <h2 id="git-title">Clone a public GitHub repository</h2>
+    <p class="muted">Replace the proxy domain, key and repository below. Git automatically
+      authenticates after a 401 Basic challenge; no extra configuration is needed.</p>
+    <code class="example">git clone https://x_holyproxy_key:YOUR_KEY@proxy.example/https://github.com/OWNER/REPO.git</code>
+    <p class="muted">The username is always <code>x_holyproxy_key</code>. Git stores
+      the key in the remote URL in <code>.git/config</code>; do not share it.
+      Run <code>git fetch</code> and <code>git pull</code> normally after cloning.</p>
+    <p class="muted">Alternatively, use a domain-scoped header on each Git command:</p>
+    <code class="example">git -c "http.https://proxy.example/.extraHeader=X-Holyproxy-Key: $HOLYPROXY_KEY" clone https://proxy.example/github.com/OWNER/REPO.git</code>
+    <p class="muted">Supports full and shallow clone, fetch and pull (Git HTTP v0/v2).
+      Use the current repository URL ending in <code>.git</code>; old redirected
+      addresses may fail. Private repositories, push, LFS, SSH and automatic
+      submodule URL rewriting are not supported. Each HTTP request counts separately,
+      not each clone; later stream failures may not appear in the counters.</p>
   </section>
 </main>
 <script>

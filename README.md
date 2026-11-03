@@ -1,7 +1,8 @@
 # holyproxy
 
-A Rust proxy for public GitHub Release assets with API keys and usage counters.
-Supports GET, HEAD, ranges, streaming, and GitHub download redirects.
+A Rust proxy for public GitHub Release assets and Git HTTPS pulls, with API keys
+and usage counters. Supports streaming, download ranges and redirects, and Git
+Smart HTTP v0/v2 clone, fetch and pull.
 
 ## Usage
 
@@ -25,8 +26,50 @@ rejected even when another key is valid. Other Authorization schemes are ignored
 Use HTTPS: Basic Auth encodes credentials; it does not encrypt them. URL userinfo
 works with clients such as curl that proactively convert it to Basic Auth; browser
 navigation and frontend fetch are not supported ways to use this URL format.
-There is no 401 login challenge. URLs and commands containing keys may appear in
+Release downloads do not issue a login challenge. Git endpoints return a 401 Basic
+challenge when credentials are missing, so standard Git clients authenticate automatically.
+URLs and commands containing keys may appear in
 history; do not share them. The public homepage does not validate credentials.
+
+## Git HTTPS
+
+Use the repository's current canonical URL ending in `.git`. No extra Git
+authentication configuration is needed:
+
+```sh
+git clone "https://x_holyproxy_key:$HOLYPROXY_KEY@proxy.example/https://github.com/OWNER/REPO.git"
+cd REPO
+git fetch
+git pull --ff-only
+```
+
+The fixed username is `x_holyproxy_key`; Git saves the remote URL, including its
+password, in `.git/config`. Do not share that file or commands containing keys.
+Git responds to the proxy’s 401 challenge using these URL credentials. Invalid or
+conflicting credentials still return 403. A header alternative is also available:
+
+```sh
+git -c "http.https://proxy.example/.extraHeader=X-Holyproxy-Key: $HOLYPROXY_KEY" \
+  clone https://proxy.example/github.com/OWNER/REPO.git
+```
+
+Repeat that `-c` option for fetch/pull, or set the same domain-scoped `http` option
+in the local repository config (which stores the key). Both inner URL forms,
+`/https://github.com/...` and `/github.com/...`, are supported. Credentials belong
+to the proxy; upstream GitHub URLs must not contain userinfo. Keys and Authorization
+are removed before every upstream request.
+
+Public repositories, full and shallow clones, and protocol v0/v2 are supported.
+Private repositories, push, Git LFS, SSH, `git://`, and automatic submodule URL
+rewriting are not supported. A renamed repository's old URL may fail: discovery
+GET redirects stay on GitHub, but POST redirects return 502 without replaying the
+body. Only upload-pack POSTs are allowed, with Git's request media type (otherwise
+415); wrong methods return 405 and unsupported targets return 400.
+
+Each discovery or upload-pack HTTP request is counted separately. The initial
+unauthenticated 401 challenge counts as an anonymous failure. Counters describe
+HTTP status outcomes, not completed clones; a later stream interruption may not be
+reflected in them. Git request and response bodies are streamed without pack buffering.
 
 ## Keys and D1
 
@@ -69,5 +112,5 @@ writes may lose counts. Downloads continue; access logging is disabled.
 
 Setup (Rust 2024, Node.js/npm): `rustup target add wasm32-unknown-unknown`,
 `cargo install worker-build --version 0.8.7 --locked`, then `npm ci`.
-Worker integration tests also require `curl` on PATH; downloads use a local mock upstream.
-At repo root: `npm run dev`, `cargo test --workspace`, `npm run test:worker`.
+At repo root: `npm run dev`, `cargo test --workspace`, `npm run check:deploy`.
+The deployment check builds the Worker and performs a dry run without publishing.

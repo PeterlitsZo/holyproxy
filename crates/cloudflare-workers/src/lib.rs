@@ -41,6 +41,11 @@ impl ApiKeyStore for WorkersApiKeys {
 
 impl ProxyRequest for WorkersRequest {
     type Error = Error;
+    type Body = worker::wasm_bindgen::JsValue;
+
+    fn take_body(&mut self) -> Result<Option<Self::Body>> {
+        Ok(self.0.inner().body().map(Into::into))
+    }
 
     fn method(&self) -> String {
         self.0.method().to_string()
@@ -79,6 +84,7 @@ impl ProxyResponse for WorkersResponse {
 
 impl HttpClient for WorkersClient {
     type Error = Error;
+    type Body = worker::wasm_bindgen::JsValue;
     type Response = WorkersResponse;
 
     async fn fetch(
@@ -86,6 +92,7 @@ impl HttpClient for WorkersClient {
         url: &Url,
         method: &str,
         headers: &[(String, String)],
+        body: Option<Self::Body>,
     ) -> Result<WorkersResponse> {
         let upstream_headers = Headers::new();
 
@@ -96,6 +103,7 @@ impl HttpClient for WorkersClient {
         let mut init = RequestInit::new();
         init.with_method(Method::from(method.to_owned()))
             .with_headers(upstream_headers)
+            .with_body(body)
             .with_redirect(RequestRedirect::Manual);
 
         let request = Request::new_with_init(url.as_str(), &init)?;
@@ -119,10 +127,10 @@ pub async fn main(req: Request, env: Env, ctx: Context) -> Result<Response> {
         Ok(response) => response,
         Err(error) => {
             if matches!(&error, ProxyError::AuthStore(_)) {
-                console_error!("Release proxy authorization store failed");
+                console_error!("Proxy authorization store failed");
             }
             if matches!(&error, ProxyError::Runtime(_)) {
-                console_error!("Release proxy upstream request failed");
+                console_error!("Proxy upstream request failed");
             }
 
             error_response::<WorkersResponse>(error)?
