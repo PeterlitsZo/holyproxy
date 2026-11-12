@@ -1,6 +1,6 @@
 # holyproxy
 
-A Rust proxy for public GitHub Release assets and Git HTTPS pulls, with API keys
+A Rust proxy for public GitHub Release assets, raw files and Git HTTPS pulls, with API keys
 and usage counters. Supports streaming, download ranges and redirects, and Git
 Smart HTTP v0/v2 clone, fetch and pull.
 
@@ -26,10 +26,27 @@ rejected even when another key is valid. Other Authorization schemes are ignored
 Use HTTPS: Basic Auth encodes credentials; it does not encrypt them. URL userinfo
 works with clients such as curl that proactively convert it to Basic Auth; browser
 navigation and frontend fetch are not supported ways to use this URL format.
-Release downloads do not issue a login challenge. Git endpoints return a 401 Basic
+Release and raw downloads do not issue a login challenge. Git endpoints return a 401 Basic
 challenge when credentials are missing, so standard Git clients authenticate automatically.
 URLs and commands containing keys may appear in
 history; do not share them. The public homepage does not validate credentials.
+
+## Raw files
+
+Proxy public files on `raw.githubusercontent.com`, including the nvm installer:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  -H "X-Holyproxy-Key: $HOLYPROXY_KEY" \
+  "https://proxy.example/https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh" \
+  -o /tmp/install-nvm.sh
+```
+
+Both `/https://raw.githubusercontent.com/...` and `/raw.githubusercontent.com/...`
+are supported, with GET/HEAD, streaming, conditional requests and download ranges.
+Redirects must remain on HTTPS `raw.githubusercontent.com`. Authentication and usage
+counting are the same as for Release downloads. This proxies the installer download;
+subsequent downloads made by the installer or nvm need their own configuration.
 
 ## Local client
 

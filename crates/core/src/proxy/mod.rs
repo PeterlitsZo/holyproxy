@@ -5,7 +5,7 @@ use url::Url;
 
 mod routing;
 
-use routing::{TargetKind, git_redirect_url, redirect_url, target_url};
+use routing::{TargetKind, git_redirect_url, raw_redirect_url, redirect_url, target_url};
 
 /// Read metadata independently of the runtime-owned request body.
 pub trait ProxyRequest {
@@ -142,7 +142,7 @@ async fn proxy_inner<C: HttpClient>(
             .query_pairs()
             .any(|(name, _)| name == "x_holyproxy_key")
         && target_url(incoming.path(), incoming.query())
-            .is_some_and(|(_, kind)| kind != TargetKind::Release)
+            .is_some_and(|(_, kind)| !kind.is_download())
     {
         return Err(ProxyError::AuthenticationRequired);
     }
@@ -193,7 +193,7 @@ async fn proxy_inner<C: HttpClient>(
 
     // Build the headers.
     let mut headers = vec![("User-Agent".into(), "holyproxy".into())];
-    for name in if kind == TargetKind::Release {
+    for name in if kind.is_download() {
         DOWNLOAD_HEADERS
     } else {
         GIT_HEADERS
@@ -225,12 +225,11 @@ async fn proxy_inner<C: HttpClient>(
         }
 
         let location = response.header("Location").map_err(ProxyError::Runtime)?;
-        let next = location.as_deref().and_then(|value| {
-            if kind == TargetKind::Release {
-                redirect_url(&target, value)
-            } else {
-                git_redirect_url(&target, value)
-            }
+        let next = location.as_deref().and_then(|value| match kind {
+            TargetKind::Release => redirect_url(&target, value),
+            TargetKind::Raw => raw_redirect_url(&target, value),
+            TargetKind::GitDiscovery => git_redirect_url(&target, value),
+            TargetKind::GitUploadPack => None,
         });
 
         match next {

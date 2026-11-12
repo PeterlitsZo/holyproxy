@@ -5,6 +5,7 @@ use url::Url;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum TargetKind {
     Release,
+    Raw,
     GitDiscovery,
     GitUploadPack,
 }
@@ -12,10 +13,14 @@ pub(super) enum TargetKind {
 impl TargetKind {
     pub fn allowed_methods(self) -> &'static str {
         match self {
-            Self::Release => "GET, HEAD",
+            Self::Release | Self::Raw => "GET, HEAD",
             Self::GitDiscovery => "GET",
             Self::GitUploadPack => "POST",
         }
+    }
+
+    pub fn is_download(self) -> bool {
+        matches!(self, Self::Release | Self::Raw)
     }
 }
 
@@ -26,6 +31,10 @@ pub(super) fn target_url(path: &str, query: Option<&str>) -> Option<(Url, Target
     let target = path.strip_prefix('/')?;
     let target = target.strip_prefix("https://").unwrap_or(target);
     let mut url = Url::parse(&format!("https://{target}")).ok()?;
+    if secure_url(&url) && url.host_str() == Some("raw.githubusercontent.com") {
+        url.set_query(query);
+        return Some((url, TargetKind::Raw));
+    }
     if !secure_url(&url) || url.host_str() != Some("github.com") {
         return None;
     }
@@ -60,6 +69,11 @@ pub(super) fn git_redirect_url(current: &Url, location: &str) -> Option<Url> {
     }
     let (url, kind) = target_url(&format!("/https://github.com{}", next.path()), next.query())?;
     (kind == TargetKind::GitDiscovery).then_some(url)
+}
+
+pub(super) fn raw_redirect_url(current: &Url, location: &str) -> Option<Url> {
+    let next = current.join(location).ok()?;
+    (secure_url(&next) && next.host_str() == Some("raw.githubusercontent.com")).then_some(next)
 }
 
 /// Parse the proxy path without decoding escaped tags, filenames or query
